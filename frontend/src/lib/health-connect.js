@@ -91,6 +91,31 @@ export function plannedType(entries) {
   return planned.length ? typeOf(planned) : null
 }
 
+// A treadmill is filed as a walk or a run, the same types as going outside. The name and the
+// equipment say which (incline treadmill is 3666). Those stay indoor: a route of someone standing
+// on a machine is not a route.
+function isTreadmill(entry) {
+  if (String(entry?.id ?? '') === '3666') return true
+  const ex = EXIDX[String(entry?.id ?? '')]
+  return /treadmill/.test(`${ex?.n || entry?.n || ''} ${ex?.eq || ''}`.toLowerCase())
+}
+
+/**
+ * Whether a live session should be an outdoor workout in Apple Health: a walk, a run or a ride,
+ * with no treadmill among the exercises that decided that type. Strength in the session, a
+ * stationary bike, or two kinds of cardio make it indoor (see typeOf). False for nothing planned.
+ * Only a true result is sent on: a false one would change every indoor record's fingerprint.
+ */
+export function sessionOutdoor(entries) {
+  const planned = (entries || []).filter(e => e && e.id != null)
+  if (!planned.length) return false
+  const type = typeOf(planned)
+  if (type !== 'walking' && type !== 'running' && type !== 'biking') return false
+  if (type === 'biking') return true
+  const deciding = planned.filter(e => exerciseType(e) === type)
+  return deciding.length > 0 && deciding.every(e => !isTreadmill(e))
+}
+
 const clip = s => (s.length > TEXT_MAX ? s.slice(0, TEXT_MAX - 1) + '…' : s)
 
 // The exercises and sets as "Copy as text" writes them, without its heading: the title already
@@ -107,12 +132,16 @@ function sessionNotes(w, opts) {
 export function sessionRecord(w, { unit, nameOf, speedUnit }) {
   const start = Number(w?.start), end = Number(w?.end)
   if (!w?.id || !(start > 0) || !(end > start)) return null
+  const done = (w.entries || []).filter(e => (e.sets || []).some(hasCompletedWork))
+  // Absent when indoor, so a strength session's fingerprint stays what it was.
+  const outdoor = sessionOutdoor(done)
   return {
     id: 'opengym-w-' + w.id,
     start, end,
     type: sessionType(w),
     title: clip(String(w.name || '').trim()),
     notes: sessionNotes(w, { unit, nameOf, speedUnit }),
+    ...(outdoor ? { outdoor: true } : {}),
   }
 }
 

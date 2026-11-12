@@ -219,7 +219,7 @@ describe('the session with the workout', () => {
     await begin()
     S.setState({ S: { active: { id: 'w1', start: now, entries: [{ id: 'bench', sets: [{ w: 60, r: 8 }] }] }, workouts: [] } })
     await flush()
-    expect(p.start).toHaveBeenCalledWith({ wid: 'w1', type: 'strength_training' })
+    expect(p.start).toHaveBeenCalledWith({ wid: 'w1', type: 'strength_training', outdoor: false })
     // Live readout.
     p.listeners.heartRate({ bpm: 128, at: Date.now() })
     expect(liveHeartRate()).toEqual({ bpm: 128, at: now })

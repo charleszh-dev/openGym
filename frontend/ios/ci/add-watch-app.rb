@@ -30,6 +30,10 @@ watch = proj.new_target(:application, NAME, :watchos, '10.0')
 group = proj.main_group.new_group(DIR, DIR)
 sources = Dir.children(File.join(dir, DIR)).select { |f| f.end_with?('.swift') }.sort
 watch.add_file_references(sources.map { |f| group.new_file(f) })
+# The outdoor route recorder lives with the iPhone plugins and is compiled into both apps.
+app_group = proj.main_group.children.find { |g| g.path == 'App' }
+route = app_group&.files&.find { |f| f.path == 'WorkoutRoute.swift' }
+watch.add_file_references([route]) if route
 # WatchCore (the session logic and the animation codec, tested with `swift test`), compiled in.
 CORE = 'WatchCore/Sources/WatchCore'
 cgroup = proj.main_group.new_group('WatchCore', CORE)

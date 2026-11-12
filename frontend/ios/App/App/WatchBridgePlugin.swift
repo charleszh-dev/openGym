@@ -95,7 +95,7 @@ public class WatchBridgePlugin: CAPPlugin, CAPBridgedPlugin, WCSessionDelegate {
         let config = HKWorkoutConfiguration()
         // The type the page planned (lib/health-connect.js plannedType, #799): a run opens as a run.
         config.activityType = AppleHealthPlugin.activityTypes[call.getString("type") ?? ""] ?? .traditionalStrengthTraining
-        config.locationType = .indoor
+        config.locationType = call.getBool("outdoor") == true ? .outdoor : .indoor
         WatchBridgePlugin.health.startWatchApp(with: config) { ok, _ in
             call.resolve(["ok": ok])
         }

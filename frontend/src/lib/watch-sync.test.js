@@ -157,9 +157,11 @@ describe('starting and finishing on the watch', () => {
     const S = { unit: 'kg', workouts: [], routines: [...routines, run], week: { 2: 'r-run' }, dayPlan: {} }
     const ready = buildReady(S, '2026-10-13')
     expect(ready.today.healthType).toBe('running')
+    expect(ready.today.outdoor).toBe(true)
     expect(ready.others.map(o => o.healthType)).toEqual(['strength_training', 'strength_training'])
+    expect(ready.others.every(o => o.outdoor === undefined)).toBe(true)
     const active = { id: 'w1', name: 'Run', entries: [{ id: '0685', target: { mode: 'cardio', min: 30 }, sets: [{ min: 30, speed: 10 }] }] }
-    expect(buildSnapshot({ ...S, active }).active.healthType).toBe('running')
+    expect(buildSnapshot({ ...S, active }).active).toMatchObject({ healthType: 'running', outdoor: true })
   })
 
   // The watch reads a snapshot whole or not at all: one odd routine must not cost it the others,

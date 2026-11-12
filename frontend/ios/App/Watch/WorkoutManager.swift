@@ -30,6 +30,8 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
     private let store = HKHealthStore()
     private var session: HKWorkoutSession?
     private var builder: HKLiveWorkoutBuilder?
+    /// Outdoor sessions only: the route and the one weather reading saved with the workout.
+    private var route: WorkoutRouteRecorder?
     private var query: HKAnchoredObjectQuery?
     /// Every reading of the session, by its own time, for each set's and rest's heart rate.
     private var samples: [(Date, Double)] = []
@@ -53,6 +55,7 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
         if let hr = HKObjectType.quantityType(forIdentifier: .heartRate) { read.insert(hr) }
         // The calories the workout burned, for the summary at its end (and in Apple Health).
         if let kcal = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned) { share.insert(kcal); read.insert(kcal) }
+        share.insert(HKSeriesType.workoutRoute())
         store.requestAuthorization(toShare: share, read: read) { ok, _ in
             DispatchQueue.main.async { done(ok) }
         }
@@ -109,8 +112,8 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
 
     /// The countdown before a workout started here: the session is made and prepared, which turns
     /// the heart-rate sensor on. It needs a few seconds to lock on, so set 1 has its heart rate.
-    func prepare(type: String? = nil) {
-        guard session == nil, make(type: type, opened: nil) else { return }
+    func prepare(type: String? = nil, outdoor: Bool = false) {
+        guard session == nil, make(type: type, opened: nil, outdoor: outdoor) else { return }
         prepared = true
         session?.prepare()
     }
@@ -119,12 +122,12 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
     /// one, after a countdown), as the type the phone planned (a run is a run in Apple Health),
     /// else as the type HealthKit opened the app with, else strength training. A session already
     /// running keeps its type.
-    func start(workoutId wid: String? = nil, type: String? = nil, opened: HKWorkoutActivityType? = nil) {
+    func start(workoutId wid: String? = nil, type: String? = nil, outdoor: Bool? = nil, opened: HKWorkoutActivityType? = nil, openedOutdoor: Bool = false) {
         wanted = true
         if let wid = wid { workoutId = wid }
         // Already running (opened by the phone before its workout arrived): only the id to add.
         if session != nil && !prepared { tag(); return }
-        guard session != nil || make(type: type, opened: opened), let s = session, let b = builder else { return }
+        guard session != nil || make(type: type, opened: opened, outdoor: outdoor ?? openedOutdoor), let s = session, let b = builder else { return }
         prepared = false
         let now = Date()
         s.startActivity(with: now)
@@ -136,11 +139,11 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
     }
 
     /// A new session of the planned type and its builder, when Apple Health is on.
-    private func make(type: String?, opened: HKWorkoutActivityType?) -> Bool {
+    private func make(type: String?, opened: HKWorkoutActivityType?, outdoor: Bool) -> Bool {
         guard enabled, HKHealthStore.isHealthDataAvailable() else { return false }
         let config = HKWorkoutConfiguration()
         config.activityType = type.flatMap { WorkoutManager.activityTypes[$0] } ?? opened ?? .traditionalStrengthTraining
-        config.locationType = .indoor
+        config.locationType = outdoor ? .outdoor : .indoor
         do {
             let s = try HKWorkoutSession(healthStore: store, configuration: config)
             let b = s.associatedWorkoutBuilder()
@@ -149,6 +152,7 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
             b.delegate = self
             session = s
             builder = b
+            beginRoute(outdoor)
             samples = []
             heartRate = nil
             calories = nil
@@ -157,8 +161,19 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
         } catch {
             session = nil
             builder = nil
+            route?.discard()
+            route = nil
             return false
         }
+    }
+
+    /// An outdoor session records its route. An indoor one drops any recorder left from before.
+    private func beginRoute(_ outdoor: Bool) {
+        route?.discard()
+        guard outdoor else { route = nil; return }
+        let rec = WorkoutRouteRecorder(store: store, outdoor: true)
+        route = rec
+        rec.start()
     }
 
     /// Rested for a workout nobody finishes (SensorPlan): the session pauses, which lets the
@@ -188,6 +203,8 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
                 guard let s = recovered else { return }
                 if let other = self.session, other !== s {
                     // Discarded before it ends, or the discard saves it (see end).
+                    self.route?.discard()
+                    self.route = nil
                     self.builder?.discardWorkout()
                     other.end()
                 }
@@ -197,6 +214,7 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
                 b.delegate = self
                 self.session = s
                 self.builder = b
+                if self.route == nil { self.beginRoute(s.workoutConfiguration.locationType == .outdoor) }
                 self.paused = s.state == .paused
                 self.wanted = true
                 if let wid = wid { self.workoutId = wid }
@@ -236,6 +254,7 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
                     self.store.deleteObjects(of: kcal, predicate: HKQuery.predicateForObjects(from: w)) { _, _, _ in group.leave() }
                 }
             }
+            WorkoutRoutes.remove(store: self.store, from: mine, group: group)
             group.notify(queue: .global()) {
                 self.store.delete(mine) { ok, _ in
                     DispatchQueue.main.async { done(ok ? nothing + Array(held) : nothing) }
@@ -301,7 +320,10 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
         let endAt = at ?? Date()
         let all = samples.filter { $0.0 <= endAt }.map { $0.1 }
         let hr = Totals(hrAvg: all.isEmpty ? nil : (all.reduce(0, +) / Double(all.count)).rounded(), hrMax: all.max()?.rounded(), calories: nil)
+        let route = self.route
+        self.route = nil
         guard let s = session, let b = builder else {
+            route?.discard()
             if let totals = totals { DispatchQueue.main.async { totals(Totals()) } }
             return
         }
@@ -309,6 +331,7 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
         builder = nil
         paused = false
         if !save {
+            route?.discard()
             // Dropped while the builder still collects: discarded first, the session ended after,
             // and no endCollection. With the session and the collection ended first, HealthKit can
             // take the discard for a finish (its builder has only "finish" left from there), and a
@@ -328,7 +351,20 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
                 out.calories = kcal.rounded()
             }
             if let totals = totals { DispatchQueue.main.async { totals(out) } }
-            b.finishWorkout { _, _ in }
+            let saveWorkout: ([String: Any]) -> Void = { weather in
+                b.addMetadata(weather) { _, _ in
+                    b.finishWorkout { workout, _ in
+                        let ended = {}
+                        if let workout, let route {
+                            route.finishRoute(with: workout, done: ended)
+                        } else {
+                            route?.discard()
+                            ended()
+                        }
+                    }
+                }
+            }
+            if let route { route.weatherMetadata(saveWorkout) } else { saveWorkout([:]) }
         }
         settle()
     }
@@ -348,7 +384,13 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
     func workoutSession(_ workoutSession: HKWorkoutSession, didChangeTo toState: HKWorkoutSessionState, from fromState: HKWorkoutSessionState, date: Date) {}
 
     func workoutSession(_ workoutSession: HKWorkoutSession, didFailWithError error: Error) {
-        DispatchQueue.main.async { self.running = false }
+        DispatchQueue.main.async {
+            self.running = false
+            if self.session === workoutSession {
+                self.route?.discard()
+                self.route = nil
+            }
+        }
     }
 
     func workoutBuilderDidCollectEvent(_ workoutBuilder: HKLiveWorkoutBuilder) {}

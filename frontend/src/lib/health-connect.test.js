@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { EXIDX } from './exercises.js'
-import { exerciseType, goneIds, healthRecords, planSync, plannedType, recordKey, sessionRecord, sessionType, SESSION_TYPES, TEXT_MAX, weightRecord, writtenIds } from './health-connect.js'
+import { exerciseType, goneIds, healthRecords, planSync, plannedType, recordKey, sessionOutdoor, sessionRecord, sessionType, SESSION_TYPES, TEXT_MAX, weightRecord, writtenIds } from './health-connect.js'
 
 // #200: what the Android app writes to Health Connect, worked out from the state alone.
 const nameOf = e => ({ '0025': 'barbell bench press', '3666': 'walking on incline treadmill', '2138': 'stationary bike run v. 3' })[e.id] || e.id
@@ -97,6 +97,30 @@ describe('plannedType', () => {
     expect(plannedType([plan('0685'), { id: '0025', target: { mode: 'reps' }, sets: [{ w: 60, r: 8 }] }])).toBe('strength_training')
     expect(plannedType([])).toBeNull()
     expect(plannedType(undefined)).toBeNull()
+  })
+})
+
+describe('sessionOutdoor', () => {
+  const plan = id => ({ id, target: { mode: 'cardio', min: 30 }, sets: [{ min: 30, speed: 10, done: false }] })
+  it('is a walk, a run or a ride outside, and not a treadmill, a stationary bike or a lift', () => {
+    expect(sessionOutdoor([plan('0685')])).toBe(true)
+    expect(sessionOutdoor([plan('2258')])).toBe(true)
+    expect(sessionOutdoor([plan('5214')])).toBe(true)
+    expect(sessionOutdoor([plan('3666')])).toBe(false)
+    expect(sessionOutdoor([plan('2197')])).toBe(false)
+    expect(sessionOutdoor([plan('2259')])).toBe(false)
+    expect(sessionOutdoor([plan('2138')])).toBe(false)
+    expect(sessionOutdoor([plan('0685'), plan('2197')])).toBe(false)
+    expect(sessionOutdoor([plan('0685'), { id: '0025', target: { mode: 'reps' }, sets: [{ w: 60, r: 8 }] }])).toBe(false)
+    expect(sessionOutdoor([])).toBe(false)
+    expect(sessionOutdoor(undefined)).toBe(false)
+  })
+  it('marks only an outdoor finished workout, so an indoor record stays as it was', () => {
+    const opts = { unit: 'kg', nameOf }
+    const done = id => ({ id, target: { mode: 'cardio' }, sets: [{ min: 20, speed: 8, done: true }] })
+    expect(sessionRecord(workout([done('0685')]), opts).outdoor).toBe(true)
+    expect(sessionRecord(workout([treadmill]), opts)).not.toHaveProperty('outdoor')
+    expect(sessionRecord(workout([strength]), opts)).not.toHaveProperty('outdoor')
   })
 })
 

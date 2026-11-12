@@ -25,7 +25,7 @@
 import { MOBILE, nativePlatform } from './mobile.js'
 import { sanitizeHr, cleanSamples } from './heart-rate.js'
 import { isSideSet } from './workout-model.js'
-import { plannedType } from './health-connect.js'
+import { plannedType, sessionOutdoor } from './health-connect.js'
 
 /** A workout older than this when the page first sees it gets no fresh session (only a recovered one). */
 export const FRESH_START_MS = 10 * 60e3
@@ -297,7 +297,7 @@ export async function startPhoneWorkout ({ useStore, useUI, apply, watch }) {
     }
     if (!running) {
       try {
-        const res = await p.PW.start({ wid: A.id, type: plannedType(A.entries) || undefined })
+        const res = await p.PW.start({ wid: A.id, type: plannedType(A.entries) || undefined, outdoor: sessionOutdoor(A.entries) })
         if (!res?.ok) return
         running = { wid: A.id, start: Number(res.start) || Date.now() }
         rests = {}

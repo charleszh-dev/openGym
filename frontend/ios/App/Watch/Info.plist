@@ -23,7 +23,9 @@
 	<key>NSHealthShareUsageDescription</key>
 	<string>openGym shows your heart rate during a workout and next to each set.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>openGym saves your workouts to Apple Health when you switch it on.</string>
+	<string>openGym saves your workouts to Apple Health when you switch it on, including the route of an outdoor one.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Used during an outdoor workout to save the route to Apple Health and look up the weather. The route stays in Apple Health. A weather lookup sends one location to Apple.</string>
 	<key>WKBackgroundModes</key>
 	<array>
 		<string>workout-processing</string>

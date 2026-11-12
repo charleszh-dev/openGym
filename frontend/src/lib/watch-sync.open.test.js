@@ -83,7 +83,7 @@ describe('startWatchSync', () => {
     st.setState({ S: { ...S0, active: live({ start: Date.now(), cur: 1 }) } })
     await new Promise(r => setTimeout(r, 0))
     expect(b.openOnWatch).toHaveBeenCalledTimes(1)
-    expect(b.openOnWatch).toHaveBeenCalledWith({ type: undefined })   // nothing in it yet: strength training
+    expect(b.openOnWatch).toHaveBeenCalledWith({ type: undefined, outdoor: false })   // nothing in it yet: strength training, indoors
     stop()
   })
 
@@ -95,7 +95,7 @@ describe('startWatchSync', () => {
     const entries = [{ id: '0685', target: { mode: 'cardio', min: 30 }, sets: [{ min: 30, speed: 10 }] }]
     st.setState({ S: { ...S0, active: live({ start: Date.now(), entries }) } })
     await new Promise(r => setTimeout(r, 0))
-    expect(b.openOnWatch).toHaveBeenCalledWith({ type: 'running' })
+    expect(b.openOnWatch).toHaveBeenCalledWith({ type: 'running', outdoor: true })
     stop()
   })
 

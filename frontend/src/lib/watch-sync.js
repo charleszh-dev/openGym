@@ -37,7 +37,7 @@ import { todayISO, exerciseNameText } from './format.js'
 import { sanitizeHr } from './heart-rate.js'
 import { readWatchPrefs, settingsForWatch, writeWatchStatus, readWatchStatus, onWatchPrefs, writeGarminLink } from './watch-settings.js'
 import { garminSnapshot } from './garmin-snapshot.js'
-import { plannedType } from './health-connect.js'
+import { plannedType, sessionOutdoor } from './health-connect.js'
 import { exView, exConverted, exUnitOf, viewEntry, viewRow, shownWeight, storedWeight } from './ex-unit.js'
 import { streakInfo } from './streak.js'
 
@@ -162,6 +162,8 @@ export function buildReady (S, today = todayISO()) {
         entries: entries.filter(e => e && e.id != null).map(e => watchEntry(e, H, S)),
         // Apple Health's workout type on the watch: a run is a run (#799)
         ...(healthType ? { healthType } : {}),
+        // Outdoor only when true: an older watch ignores the field, an indoor session sends none.
+        ...(sessionOutdoor(entries) ? { outdoor: true } : {}),
       }
     } catch { return null }
   }
@@ -181,6 +183,7 @@ export function buildSnapshot(S, { timer = null, ready = null, activeAt = null }
   let H = null
   try { H = sessionHistory(S) } catch { H = null }
   const healthType = plannedType(A.entries)
+  const outdoor = sessionOutdoor(A.entries)
   return {
     v: SNAPSHOT_VERSION,
     unit,
@@ -199,6 +202,7 @@ export function buildSnapshot(S, { timer = null, ready = null, activeAt = null }
       entries: A.entries.filter(e => e && e.id != null).map(e => watchEntry(e, H, S)),
       // Apple Health's workout type on the watch: a run is a run (#799)
       ...(healthType ? { healthType } : {}),
+      ...(outdoor ? { outdoor: true } : {}),
       // The last thing done in it on the phone (#904): the watch's forgotten-workout clock
       // counts from it, so sets ticked on the phone keep the watch from ending the workout.
       ...(num(activeAt) ? { activeAt: num(activeAt) } : {}),
@@ -751,7 +755,7 @@ async function runLink (p, { useStore, useUI }, { health = true, clips: withClip
     }
     schedule()
     // A workout started on the phone: the watch app opens with it (HealthKit's startWatchApp).
-    if (linked && shouldOpenOnWatch(prev.S?.active, s.S?.active)) Promise.resolve().then(() => p.WatchBridge.openOnWatch({ type: plannedType(s.S.active.entries) || undefined })).catch(() => {})
+    if (linked && shouldOpenOnWatch(prev.S?.active, s.S?.active)) Promise.resolve().then(() => p.WatchBridge.openOnWatch({ type: plannedType(s.S.active.entries) || undefined, outdoor: sessionOutdoor(s.S.active.entries) })).catch(() => {})
   })
   // The rest as the watch needs it changes when it starts, stops or is paused, not every second.
   const restOf = t => (t ? `${t.endsAt}|${!!t.paused}|${!!t.ready}` : '')
