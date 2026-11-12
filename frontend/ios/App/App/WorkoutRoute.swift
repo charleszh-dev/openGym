@@ -4,55 +4,62 @@ import HealthKit
 import WeatherKit
 
 /**
- * The GPS route and the one weather reading of an outdoor live session, on the iPhone (iOS 26,
- * PhoneWorkoutPlugin) and the Apple Watch (WorkoutManager). Indoor sessions never make one.
+ * Where a live workout happened, and the weather there, on the iPhone (iOS 26, PhoneWorkoutPlugin)
+ * and the Apple Watch (WorkoutManager). One type for both, because both save one HKWorkout and
+ * HealthKit attaches a place the same way.
  *
- * The route is attached after the workout is saved (HealthKit requires that). Weather is metadata
- * on the workout itself, so it has to be added before finishWorkout. Either one failing leaves the
- * workout in Apple Health: a refused permission, no GPS fix, or WeatherKit down.
+ * Apple's own Fitness shows a pin for a strength workout and a path for a walk, run or ride, plus
+ * the weather on either. HealthKit has no pin of its own: the place is an HKWorkoutRoute, one
+ * location when the session did not move, the path when it did (`path`). Weather is metadata on
+ * the workout, so it is added before finishWorkout. The route is attached after, which HealthKit
+ * requires. A missing fix, a refused permission or WeatherKit failing leaves the workout saved.
  *
  * Compiled into both targets. Not in WatchCore: that package stays free of HealthKit so `swift test`
  * can build it. WeatherKit needs iOS 16; the iPhone session that uses this is iOS 26.
  */
 @available(iOS 16.0, watchOS 9.0, *)
-final class WorkoutRouteRecorder: NSObject, CLLocationManagerDelegate {
+final class WorkoutLocation: NSObject, CLLocationManagerDelegate {
     private let store: HKHealthStore
-    private let outdoor: Bool
+    /// A walk, run or ride outside: keep the path. Anything else: one location, the place it happened.
+    private let path: Bool
     private let manager = CLLocationManager()
     private var route: HKWorkoutRouteBuilder?
     private var points: [CLLocation] = []
+    private var place: CLLocation?
     private var weather: [String: Any] = [:]
     private var lookedUp = false
     private var askedLocation = false
     private var backgroundOn = false
     private var lookup: Task<Void, Never>?
 
-    init(store: HKHealthStore, outdoor: Bool) {
+    /// A place this accurate is enough to stop listening. A path keeps every tighter fix.
+    private static let placeAccuracy: CLLocationAccuracy = 100
+    private static let pathAccuracy: CLLocationAccuracy = 50
+
+    init(store: HKHealthStore, path: Bool) {
         self.store = store
-        self.outdoor = outdoor
+        self.path = path
         super.init()
     }
 
-    /// Starts listening when this is an outdoor session and location is allowed. Asks once when it
-    /// has not been asked yet. Also asks to write a workout route, which the original Health
-    /// permission may not have included.
+    /// Starts listening. Asks for location once, and to write a route if that was not granted yet
+    /// (the original Health permission may predate routes).
     func start() {
-        guard outdoor else { return }
         let run = { self.startOnMain() }
         if Thread.isMainThread { run() } else { DispatchQueue.main.async(execute: run) }
     }
 
     private func startOnMain() {
-        guard outdoor, route == nil else { return }
+        guard route == nil else { return }
         route = HKWorkoutRouteBuilder(healthStore: store, device: .local())
         let routeType = HKSeriesType.workoutRoute()
         if store.authorizationStatus(for: routeType) != .sharingAuthorized {
             store.requestAuthorization(toShare: [routeType], read: []) { _, _ in }
         }
         manager.delegate = self
-        manager.activityType = .fitness
-        manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
-        manager.distanceFilter = 10
+        manager.activityType = path ? .fitness : .other
+        manager.desiredAccuracy = path ? kCLLocationAccuracyNearestTenMeters : kCLLocationAccuracyHundredMeters
+        manager.distanceFilter = path ? 10 : kCLDistanceFilterNone
         beginUpdatesIfAllowed()
     }
 
@@ -66,10 +73,14 @@ final class WorkoutRouteRecorder: NSObject, CLLocationManagerDelegate {
         }
         guard status == .authorizedAlways || status == .authorizedWhenInUse else { return }
         #if os(iOS)
-        manager.pausesLocationUpdatesAutomatically = false
-        if !backgroundOn {
-            manager.allowsBackgroundLocationUpdates = true
-            backgroundOn = true
+        // Background updates are for a path that continues with the phone locked. A place is one
+        // fix at the start, and the gym reminder does not use this mode.
+        if path {
+            manager.pausesLocationUpdatesAutomatically = false
+            if !backgroundOn {
+                manager.allowsBackgroundLocationUpdates = true
+                backgroundOn = true
+            }
         }
         #endif
         manager.startUpdatingLocation()
@@ -81,18 +92,23 @@ final class WorkoutRouteRecorder: NSObject, CLLocationManagerDelegate {
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         let valid = locations.filter { $0.horizontalAccuracy >= 0 }
-        // A first fix is often rough. The route keeps the tighter ones; weather can use a coarser
-        // point, because it only needs to be near where the session is.
-        let tight = valid.filter { $0.horizontalAccuracy <= 50 }
-        points.append(contentsOf: tight)
-        let needWeather = !lookedUp && !valid.isEmpty
-        if needWeather { lookedUp = true }
-        if needWeather, let loc = valid.min(by: { $0.horizontalAccuracy < $1.horizontalAccuracy }) {
+        guard !valid.isEmpty else { return }
+        if !lookedUp, let loc = valid.min(by: { $0.horizontalAccuracy < $1.horizontalAccuracy }) {
+            lookedUp = true
             lookup = Task { await self.lookupWeather(loc) }
         }
+        if path {
+            points.append(contentsOf: valid.filter { $0.horizontalAccuracy <= Self.pathAccuracy })
+            return
+        }
+        if let loc = valid.min(by: { $0.horizontalAccuracy < $1.horizontalAccuracy }),
+           place == nil || loc.horizontalAccuracy < place!.horizontalAccuracy {
+            place = loc
+        }
+        if let place = place, place.horizontalAccuracy <= Self.placeAccuracy { stopUpdating() }
     }
 
-    /// Stops the radio. Points already taken stay, for a save that follows.
+    /// Stops the radio. A fix already taken stays, for a save that follows.
     func stopUpdating() {
         let run = {
             self.manager.stopUpdatingLocation()
@@ -111,6 +127,7 @@ final class WorkoutRouteRecorder: NSObject, CLLocationManagerDelegate {
         stopUpdating()
         lookup?.cancel()
         points = []
+        place = nil
         weather = [:]
         route = nil
     }
@@ -134,15 +151,15 @@ final class WorkoutRouteRecorder: NSObject, CLLocationManagerDelegate {
         }
     }
 
-    /// Attaches the route to a workout that is already in Apple Health. Calls `done` either way.
-    func finishRoute(with workout: HKWorkout, done: @escaping () -> Void) {
+    /// Attaches the place, or the path, to a workout that is already in Apple Health. Calls `done` either way.
+    func finish(with workout: HKWorkout, done: @escaping () -> Void) {
         let go = {
             self.stopUpdating()
             guard let builder = self.route else { done(); return }
             self.route = nil
-            let start = workout.startDate, end = workout.endDate
-            let taken = self.points.filter { $0.timestamp >= start && $0.timestamp <= end }
+            let taken = self.locations(from: workout.startDate, to: workout.endDate)
             self.points = []
+            self.place = nil
             guard !taken.isEmpty else { done(); return }
             Task {
                 do {
@@ -162,6 +179,20 @@ final class WorkoutRouteRecorder: NSObject, CLLocationManagerDelegate {
         if Thread.isMainThread { go() } else { DispatchQueue.main.async(execute: go) }
     }
 
+    /// Points whose times fall inside the workout. A place taken a moment outside that is moved
+    /// onto the workout's own interval, so HealthKit will keep it.
+    private func locations(from start: Date, to end: Date) -> [CLLocation] {
+        if path {
+            return points.filter { $0.timestamp >= start && $0.timestamp <= end }
+        }
+        guard let place = place else { return [] }
+        let stamp = min(max(place.timestamp, start), end)
+        guard stamp != place.timestamp else { return [place] }
+        return [CLLocation(coordinate: place.coordinate, altitude: place.altitude,
+                            horizontalAccuracy: place.horizontalAccuracy, verticalAccuracy: place.verticalAccuracy,
+                            timestamp: stamp)]
+    }
+
     private func lookupWeather(_ loc: CLLocation) async {
         guard !Task.isCancelled else { return }
         do {
@@ -176,7 +207,7 @@ final class WorkoutRouteRecorder: NSObject, CLLocationManagerDelegate {
             ]
             await MainActor.run { self.weather = meta }
         } catch {
-            // No weather on the workout. The route, if any, is unaffected.
+            // No weather on the workout. The place, if any, is unaffected.
         }
     }
 

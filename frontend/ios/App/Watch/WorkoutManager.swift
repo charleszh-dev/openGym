@@ -30,8 +30,8 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
     private let store = HKHealthStore()
     private var session: HKWorkoutSession?
     private var builder: HKLiveWorkoutBuilder?
-    /// Outdoor sessions only: the route and the one weather reading saved with the workout.
-    private var route: WorkoutRouteRecorder?
+    /// Where this session happened, and the weather there. A walk, run or ride keeps the path.
+    private var location: WorkoutLocation?
     private var query: HKAnchoredObjectQuery?
     /// Every reading of the session, by its own time, for each set's and rest's heart rate.
     private var samples: [(Date, Double)] = []
@@ -152,7 +152,7 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
             b.delegate = self
             session = s
             builder = b
-            beginRoute(outdoor)
+            beginLocation(outdoor)
             samples = []
             heartRate = nil
             calories = nil
@@ -161,18 +161,18 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
         } catch {
             session = nil
             builder = nil
-            route?.discard()
-            route = nil
+            location?.discard()
+            location = nil
             return false
         }
     }
 
-    /// An outdoor session records its route. An indoor one drops any recorder left from before.
-    private func beginRoute(_ outdoor: Bool) {
-        route?.discard()
-        guard outdoor else { route = nil; return }
-        let rec = WorkoutRouteRecorder(store: store, outdoor: true)
-        route = rec
+    /// Every live session records where it happened and the weather. `path` keeps the route of a
+    /// walk, run or ride; anything else keeps one location.
+    private func beginLocation(_ path: Bool) {
+        location?.discard()
+        let rec = WorkoutLocation(store: store, path: path)
+        location = rec
         rec.start()
     }
 
@@ -203,8 +203,8 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
                 guard let s = recovered else { return }
                 if let other = self.session, other !== s {
                     // Discarded before it ends, or the discard saves it (see end).
-                    self.route?.discard()
-                    self.route = nil
+                    self.location?.discard()
+                    self.location = nil
                     self.builder?.discardWorkout()
                     other.end()
                 }
@@ -214,7 +214,7 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
                 b.delegate = self
                 self.session = s
                 self.builder = b
-                if self.route == nil { self.beginRoute(s.workoutConfiguration.locationType == .outdoor) }
+                if self.location == nil { self.beginLocation(s.workoutConfiguration.locationType == .outdoor) }
                 self.paused = s.state == .paused
                 self.wanted = true
                 if let wid = wid { self.workoutId = wid }
@@ -320,10 +320,10 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
         let endAt = at ?? Date()
         let all = samples.filter { $0.0 <= endAt }.map { $0.1 }
         let hr = Totals(hrAvg: all.isEmpty ? nil : (all.reduce(0, +) / Double(all.count)).rounded(), hrMax: all.max()?.rounded(), calories: nil)
-        let route = self.route
-        self.route = nil
+        let place = location
+        location = nil
         guard let s = session, let b = builder else {
-            route?.discard()
+            place?.discard()
             if let totals = totals { DispatchQueue.main.async { totals(Totals()) } }
             return
         }
@@ -331,7 +331,7 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
         builder = nil
         paused = false
         if !save {
-            route?.discard()
+            place?.discard()
             // Dropped while the builder still collects: discarded first, the session ended after,
             // and no endCollection. With the session and the collection ended first, HealthKit can
             // take the discard for a finish (its builder has only "finish" left from there), and a
@@ -354,17 +354,17 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
             let saveWorkout: ([String: Any]) -> Void = { weather in
                 b.addMetadata(weather) { _, _ in
                     b.finishWorkout { workout, _ in
-                        let ended = {}
-                        if let workout, let route {
-                            route.finishRoute(with: workout, done: ended)
+                        let ended: () -> Void = {}
+                        if let workout, let place {
+                            place.finish(with: workout, done: ended)
                         } else {
-                            route?.discard()
+                            place?.discard()
                             ended()
                         }
                     }
                 }
             }
-            if let route { route.weatherMetadata(saveWorkout) } else { saveWorkout([:]) }
+            if let place { place.weatherMetadata(saveWorkout) } else { saveWorkout([:]) }
         }
         settle()
     }
@@ -387,8 +387,8 @@ final class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate
         DispatchQueue.main.async {
             self.running = false
             if self.session === workoutSession {
-                self.route?.discard()
-                self.route = nil
+                self.location?.discard()
+                self.location = nil
             }
         }
     }

@@ -163,8 +163,8 @@ final class PhoneWorkoutSession: NSObject, HKWorkoutSessionDelegate, HKLiveWorko
     private var session: HKWorkoutSession?
     private var builder: HKLiveWorkoutBuilder?
     private var query: HKAnchoredObjectQuery?
-    /// Outdoor sessions only: the route and the one weather reading saved with the workout.
-    private var route: WorkoutRouteRecorder?
+    /// Where this session happened, and the weather there. A walk, run or ride keeps the path.
+    private var location: WorkoutLocation?
     private let bpm = HKUnit.count().unitDivided(by: .minute())
     /// Every reading of the session by its own time, oldest first (main queue only).
     private var readings: [(Date, Double)] = []
@@ -205,7 +205,7 @@ final class PhoneWorkoutSession: NSObject, HKWorkoutSessionDelegate, HKLiveWorko
         let now = Date()
         startedAt = now
         PhoneWorkoutLedger.mark(Self.syncId(wid), "live")
-        beginRoute(outdoor)
+        beginLocation(outdoor)
         s.startActivity(with: now)
         b.beginCollection(withStart: now) { _, _ in
             // One workout in Apple Health: the post-hoc write finds this sync id and skips it.
@@ -215,12 +215,12 @@ final class PhoneWorkoutSession: NSObject, HKWorkoutSessionDelegate, HKLiveWorko
         return true
     }
 
-    /// An outdoor session records its route. An indoor one, or a second start, drops any previous recorder.
-    private func beginRoute(_ outdoor: Bool) {
-        route?.discard()
-        guard outdoor else { route = nil; return }
-        let rec = WorkoutRouteRecorder(store: store, outdoor: true)
-        route = rec
+    /// Every live session records where it happened and the weather. `path` keeps the route of a
+    /// walk, run or ride; anything else keeps one location. A second start drops the previous one.
+    private func beginLocation(_ path: Bool) {
+        location?.discard()
+        let rec = WorkoutLocation(store: store, path: path)
+        location = rec
         rec.start()
     }
 
@@ -256,7 +256,7 @@ final class PhoneWorkoutSession: NSObject, HKWorkoutSessionDelegate, HKLiveWorko
         b.delegate = self
         session = s
         builder = b
-        beginRoute(s.workoutConfiguration.locationType == .outdoor)
+        beginLocation(s.workoutConfiguration.locationType == .outdoor)
         let sid = (b.metadata as [String: Any]?)?[HKMetadataKeySyncIdentifier] as? String
         workoutId = sid.flatMap { $0.hasPrefix("opengym-w-") ? String($0.dropFirst("opengym-w-".count)) : nil }
         startedAt = s.startDate ?? b.startDate ?? Date()
@@ -292,21 +292,21 @@ final class PhoneWorkoutSession: NSObject, HKWorkoutSessionDelegate, HKLiveWorko
     /// `discarded`: the workout itself was discarded in the app. Then a copy of it that reached
     /// Apple Health anyway is taken out again, a moment later.
     func end(workoutId wid: String?, save: Bool, at: Date?, title: String?, discarded: Bool = false) {
-        guard let s = session, let b = builder else { route?.discard(); route = nil; return }
+        guard let s = session, let b = builder else { location?.discard(); location = nil; return }
         if let wid = wid, wid != workoutId { return }
         let sid = workoutId.map(Self.syncId)
         if let q = query { store.stop(q); query = nil }
         let endAt = max(at ?? Date(), b.startDate ?? startedAt ?? Date())
-        let route = self.route
+        let place = location
         session = nil
         builder = nil
-        self.route = nil
+        location = nil
         workoutId = nil
         startedAt = nil
         readings = []
         toldBpm = nil
         if !save {
-            route?.discard()
+            place?.discard()
             // Discarded while the builder still collects, the session ended after: ended first,
             // HealthKit can take the discard for a finish and save the workout (TestFlight 1.4.4).
             b.discardWorkout()
@@ -331,16 +331,16 @@ final class PhoneWorkoutSession: NSObject, HKWorkoutSessionDelegate, HKLiveWorko
                                 if let sid = sid { PhoneWorkoutLedger.mark(sid, workout != nil ? "saved" : nil) }
                                 s.end()
                             }
-                            if let workout, let route {
-                                route.finishRoute(with: workout, done: ended)
+                            if let workout, let place {
+                                place.finish(with: workout, done: ended)
                             } else {
-                                route?.discard()
+                                place?.discard()
                                 ended()
                             }
                         }
                     }
                 }
-                if let route { route.weatherMetadata(saveWorkout) } else { saveWorkout([:]) }
+                if let place { place.weatherMetadata(saveWorkout) } else { saveWorkout([:]) }
             }
         }
         stopping.append((s, finish))
@@ -423,8 +423,8 @@ final class PhoneWorkoutSession: NSObject, HKWorkoutSessionDelegate, HKLiveWorko
             guard self.session === workoutSession else { return }
             if let q = self.query { self.store.stop(q); self.query = nil }
             if let wid = self.workoutId { PhoneWorkoutLedger.mark(Self.syncId(wid), nil) }
-            self.route?.discard()
-            self.route = nil
+            self.location?.discard()
+            self.location = nil
             self.builder?.discardWorkout()
             self.session = nil
             self.builder = nil

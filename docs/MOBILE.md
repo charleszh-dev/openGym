@@ -332,15 +332,17 @@ iPhone runs one, the same `HKWorkoutSession` + `HKLiveWorkoutBuilder` the Apple 
   version 1, the workout's name as `OpenGymTitle`). `AppleHealthPlugin.saveSession` asks
   `PhoneWorkoutLedger` and skips its post-hoc write for it, as it does for the watch's copy (it waits
   up to 20 s for a save still in flight). Discarding drops it (`discardWorkout`).
-- **Outdoor route and weather.** A live session that `sessionOutdoor` (`lib/health-connect.js`)
-  calls outdoor (a walk, a run or a ride, with no treadmill in the exercises that decided that,
-  and no strength work) sets `locationType` to outdoor. `WorkoutRoute.swift` records a GPS route
-  (`HKWorkoutRouteBuilder`, attached after `finishWorkout`) and one weather reading (condition,
-  temperature, humidity) from WeatherKit, added before the workout is finished. The watch does
-  this when it owns the session. The iPhone session does it on iOS 26 when the watch does not.
-  A workout written afterwards only gets the indoor or outdoor mark: no route, no weather.
-  Deleting the workout deletes its route first. No fix, a refused permission or a weather failure
-  still saves the workout, the heart rate and the active energy.
+- **Place, route and weather.** Every live session records where it happened and one weather
+  reading (condition, temperature, humidity) from WeatherKit. `sessionOutdoor`
+  (`lib/health-connect.js`) decides the path: a walk, a run or a ride, with no treadmill in the
+  exercises that decided that and no strength work, sets `locationType` to outdoor and keeps the
+  GPS route. Anything else keeps one location. HealthKit has no separate pin, so both are an
+  `HKWorkoutRoute` (`WorkoutRoute.swift`), attached after `finishWorkout`. Weather is metadata,
+  added before the workout is finished. The watch does this when it owns the session. The iPhone
+  session does it on iOS 26 when the watch does not. A workout written afterwards only gets the
+  indoor or outdoor mark: no place, no weather. Deleting the workout deletes its route first.
+  No fix, a refused permission or a weather failure still saves the workout, the heart rate and
+  the active energy.
 - **AirPods out:** readings stop, the session keeps going, they resume when the buds go back in.
 - **Crash or kill:** iOS keeps the session and hands it back on the next launch
   (`UIScene.ConnectionOptions.shouldHandleActiveWorkoutRecovery` in `AppDelegate`,
@@ -348,12 +350,13 @@ iPhone runs one, the same `HKWorkoutSession` + `HKLiveWorkoutBuilder` the Apple 
   with, rest windows included (kept in `localStorage`).
 - **Background mode:** `processing` in `UIBackgroundModes`, as in Apple's iPhone sample ("Building
   a workout app for iPhone and iPad", WWDC25 session 322). Not watchOS's `workout-processing`, which
-  Apple lists for the watch only. `location` is also declared: an outdoor session turns background
-  location updates on while it runs and off when it ends. The gym reminder does not use that mode.
+  Apple lists for the watch only. `location` is also declared: a session that records its path
+  turns background location updates on while it runs and off when it ends. A single place does
+  not. The gym reminder does not use that mode.
 - **Permissions:** the heart-rate session adds none of its own. The Apple Health switch asks to save
   workouts (and, with them, a workout route) and to read the heart rate; the usage strings say
-  AirPods too. An outdoor session asks for location while the app is in use, if it has not been
-  allowed already. The watch asks for the same route and location when its session is outdoor.
+  AirPods too. A live session asks for location while the app is in use, if it has not been
+  allowed already. The watch asks for the same when its session starts.
 - **Below iOS 26** the plugin answers `{ supported: false }` and nothing runs.
 
 Worth checking on a real iPhone on iOS 26 with AirPods Pro 3: buds in from the start; put in

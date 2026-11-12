@@ -114,12 +114,12 @@
 	<key>NSHealthShareUsageDescription</key>
 	<string>Used to show your heart rate while you train, measured by your Apple Watch or by AirPods that track it, and, when you switch it on, to add the heart rate your watch saved and weigh-ins from other apps to your log.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>Used to save your finished workouts (with the heart rate measured during them), the route of an outdoor one, and weigh-ins to Apple Health, when you switch it on.</string>
+	<string>Used to save your finished workouts (with the heart rate measured during them), where a workout happened, the route of an outdoor one, and weigh-ins to Apple Health, when you switch it on.</string>
 	<!-- Gym reminder (#614): off until switched on in Settings. Region monitoring needs Always.
-	     The location background mode is for an outdoor workout's route, and only while that
+	     The location background mode is for a workout that records its path, and only while that
 	     session runs. The gym reminder does not use it. -->
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Used to put a gym on the map for the gym reminder, and during an outdoor workout to save the route to Apple Health and look up the weather. The route stays in Apple Health on this iPhone. A weather lookup sends one location to Apple.</string>
+	<string>Used to put a gym on the map for the gym reminder, and during a workout to save where it happened to Apple Health and look up the weather. An outdoor walk, run or ride also saves the route. A weather lookup sends one location to Apple.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Lets the gym reminder notice when you arrive at a gym you added, even with openGym closed. iOS only watches those places, and your location never leaves this iPhone.</string>
 	<!-- NFC stickers (NfcTagsPlugin.swift): Core NFC's own sheet, only when you write one. -->

@@ -194,8 +194,8 @@ public class AppleHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         if await PhoneWorkoutLedger.handled(id) { return }
         let config = HKWorkoutConfiguration()
         config.activityType = AppleHealthPlugin.activityTypes[(s["type"] as? String) ?? ""] ?? .other
-        // The live session writes the route. This copy only says indoor or outdoor, so a treadmill
-        // run is not marked outdoor and a real run is, even when no points were taken.
+        // The live session writes the place and the weather. This copy only says indoor or outdoor,
+        // so a treadmill run is not marked outdoor and a real run is, even when no points were taken.
         config.locationType = Self.isOutdoor(s) ? .outdoor : .indoor
         let builder = HKWorkoutBuilder(healthStore: store, configuration: config, device: .local())
         let start = Date(timeIntervalSince1970: startMs / 1000), end = Date(timeIntervalSince1970: endMs / 1000)

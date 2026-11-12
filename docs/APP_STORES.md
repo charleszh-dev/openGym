@@ -248,14 +248,15 @@ on the phone (Settings → Reset, or uninstall).
      `ch.opengym.app.watchkitapp` and `ch.opengym.app.watchkitapp.widgets`. The app, the downloader,
      the widgets and the watch widget share the App Group `group.ch.opengym.app`; the app and the
      watch app have HealthKit. The iPhone app and the watch app also need the WeatherKit capability,
-     so an outdoor workout can store the weather with its route. Regenerate those two profiles
+     so a live workout can store the weather with where it happened. Regenerate those two profiles
      after enabling it, or signing fails. The widget profiles do not need it.
    - Users and Access → Integrations → App Store Connect API key (Admin) for uploads; with it the
      bundle id, certificate and profile can also be created through the API instead of the portal.
    - Keep all of it next to the Android keystore (`/root/.config/opengym/`, never in a repo).
 4. App Privacy: "Data Not Collected" by the developer. Location is used on the device for the gym
-   reminder and, during an outdoor workout, to write the route into Apple Health and to ask Apple
-   for the weather. It is not used for tracking, and it is not sent to openGym. Age rating: 4+.
+   reminder and, during a live workout, to write where it happened into Apple Health and to ask
+   Apple for the weather. An outdoor walk, run or ride also writes its route. It is not used for
+   tracking, and it is not sent to openGym. Age rating: 4+.
    Category: Health & Fitness.
 5. Review notes: no sign-in needed ("Use on this device"). The Coach is optional and needs the
    user's own AI provider key; give the reviewer a key with a small spending limit, or say so.
