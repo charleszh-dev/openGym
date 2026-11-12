@@ -11,8 +11,9 @@ import UserNotifications
  * iOS watches the gyms itself with region monitoring (at most 20 regions per app), with openGym
  * closed and at hardly any battery cost: on arriving it launches the app in the background and
  * hands GymReminderCenter the region, which decides with GymReminderRules whether to post and
- * posts a local notification. That needs "Always" location; no background location mode
- * (UIBackgroundModes location) is needed or declared, region monitoring works without it.
+ * posts a local notification. That needs "Always" location. Region monitoring does not need
+ * the location background mode. That mode is declared for a workout that records its path, and
+ * the location recorder turns it on only while that session runs.
  *
  * The page's status (last day trained, a running session, the words in the app's language) is
  * kept beside the gyms, so the decision needs no JavaScript. All of it lives in one file in

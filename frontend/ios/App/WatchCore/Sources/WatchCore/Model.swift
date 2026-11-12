@@ -33,6 +33,8 @@ struct ReadySession: Codable, Equatable {
     var entries: [Entry]
     /// Apple Health's workout type for it (lib/health-connect.js plannedType, #799); none from an older phone.
     var healthType: String?
+    /// An outdoor walk, run or ride (lib/health-connect.js sessionOutdoor). Absent: indoor, including an older phone.
+    var outdoor: Bool? = nil
 }
 
 struct ActiveWorkout: Codable, Equatable {
@@ -47,6 +49,8 @@ struct ActiveWorkout: Codable, Equatable {
     var start: Double?
     /// Apple Health's workout type for it (#799); none: strength training, as before.
     var healthType: String?
+    /// An outdoor walk, run or ride. Absent: indoor, including an older phone.
+    var outdoor: Bool? = nil
     /// When it was last worked on on the phone (ms): a set ticked, an edit, the app opened with it
     /// (#904). The forgotten-workout check counts from it as from a set logged here.
     var activeAt: Double? = nil

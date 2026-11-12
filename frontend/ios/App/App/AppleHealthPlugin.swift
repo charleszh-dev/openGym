@@ -43,7 +43,7 @@ public class AppleHealthPlugin: CAPPlugin, CAPBridgedPlugin {
     private let store = HKHealthStore()
     private var bodyMass: HKQuantityType { HKQuantityType.quantityType(forIdentifier: .bodyMass)! }
 
-    private var shareTypes: Set<HKSampleType> { [HKObjectType.workoutType(), bodyMass] }
+    private var shareTypes: Set<HKSampleType> { [HKObjectType.workoutType(), bodyMass, HKSeriesType.workoutRoute()] }
     private var readTypes: Set<HKObjectType> {
         var types: Set<HKObjectType> = [HKObjectType.workoutType(), bodyMass]
         if let hr = HKObjectType.quantityType(forIdentifier: .heartRate) { types.insert(hr) }
@@ -195,7 +195,9 @@ public class AppleHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         if await PhoneWorkoutLedger.handled(id) { return }
         let config = HKWorkoutConfiguration()
         config.activityType = AppleHealthPlugin.activityTypes[(s["type"] as? String) ?? ""] ?? .other
-        config.locationType = .indoor
+        // The live session writes the place and the weather. This copy only says indoor or outdoor,
+        // so a treadmill run is not marked outdoor and a real run is, even when no points were taken.
+        config.locationType = Self.isOutdoor(s) ? .outdoor : .indoor
         let builder = HKWorkoutBuilder(healthStore: store, configuration: config, device: .local())
         let start = Date(timeIntervalSince1970: startMs / 1000), end = Date(timeIntervalSince1970: endMs / 1000)
         try await builder.beginCollection(at: start)
@@ -210,6 +212,13 @@ public class AppleHealthPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
         _ = try await builder.finishWorkout()
+    }
+
+    /// Capacitor hands a JSON boolean as a Bool or an NSNumber.
+    private static func isOutdoor(_ s: [String: Any]) -> Bool {
+        if let on = s["outdoor"] as? Bool { return on }
+        if let on = s["outdoor"] as? NSNumber { return on.boolValue }
+        return false
     }
 
     /// Whether another app of ours (the Apple Watch app) saved this session already.
@@ -263,6 +272,17 @@ public class AppleHealthPlugin: CAPPlugin, CAPBridgedPlugin {
     /// let this app delete), so the next sync tries them again instead of forgetting them.
     private func delete(_ type: HKObjectType, ids: [String]) async throws -> [String] {
         let predicate = HKQuery.predicateForObjects(withMetadataKey: HKMetadataKeySyncIdentifier, allowedValues: ids)
+        // A route is a separate sample. Find the workouts first and take their routes out, then the
+        // workouts themselves. A read that is not allowed skips the route step; the delete below still runs.
+        if type == HKObjectType.workoutType() {
+            let found: [HKSample] = await withCheckedContinuation { cont in
+                let q = HKSampleQuery(sampleType: HKObjectType.workoutType(), predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, _ in
+                    cont.resume(returning: samples ?? [])
+                }
+                self.store.execute(q)
+            }
+            await WorkoutRoutes.remove(store: store, from: found.compactMap { $0 as? HKWorkout })
+        }
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             store.deleteObjects(of: type, predicate: predicate) { _, _, error in
                 if let error = error { cont.resume(throwing: error) } else { cont.resume() }

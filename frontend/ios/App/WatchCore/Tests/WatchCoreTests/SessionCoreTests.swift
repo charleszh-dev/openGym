@@ -105,10 +105,14 @@ final class SessionCoreTests: XCTestCase {
         var ready = ReadySession(routineIds: ["r1"], name: "Run", entries: [])
         ready.healthType = "running"
         XCTAssertEqual(SessionCore.start(SessionState(), ready, wid: "watch-1", at: 100, id: "s1").0.workout?.healthType, "running")
+        ready.outdoor = true
+        XCTAssertEqual(SessionCore.start(SessionState(), ready, wid: "watch-1", at: 100, id: "s1").0.workout?.outdoor, true)
         let old = try JSONDecoder().decode(Snapshot.self, from: Data(#"{"v":1,"active":{"id":"p1","name":"Push","unit":"kg","cur":0,"restSec":90,"entries":[]}}"#.utf8))
         XCTAssertNil(old.active?.healthType)
         let run = try JSONDecoder().decode(Snapshot.self, from: Data(#"{"v":1,"active":{"id":"p1","name":"Run","unit":"kg","cur":0,"restSec":90,"entries":[],"healthType":"running"}}"#.utf8))
         XCTAssertEqual(SessionCore.applySnapshot(SessionState(), run).workout?.healthType, "running")
+        let outside = try JSONDecoder().decode(Snapshot.self, from: Data(#"{"v":1,"active":{"id":"p1","name":"Run","unit":"kg","cur":0,"restSec":90,"entries":[],"healthType":"running","outdoor":true}}"#.utf8))
+        XCTAssertEqual(SessionCore.applySnapshot(SessionState(), outside).workout?.outdoor, true)
     }
 
     func testAnotherWorkoutOnThePhoneStartsClean() {

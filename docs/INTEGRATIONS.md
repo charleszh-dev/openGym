@@ -6,7 +6,7 @@ you switch it on.
 
 | Card | Where it works | What it does |
 |---|---|---|
-| **Apple Health** | iPhone app | Finished workouts and weigh-ins go to Apple Health; heart rate from your watch and weigh-ins from your scale come back. |
+| **Apple Health** | iPhone app | Finished workouts and weigh-ins go to Apple Health; heart rate from your watch and weigh-ins from your scale come back. A live workout also saves where it happened and the weather, and an outdoor walk, run or ride saves its route. |
 | **Health Connect** | Android app | The same, with Health Connect. |
 | **Hevy** | everywhere | A one-off import of your Hevy history with a Hevy Pro API key. |
 | **Import a file** | everywhere | Strong, FitNotes, Hevy CSV, GymMane or an Apple Health export, once ([details](DATA_IMPORTS.md)). |

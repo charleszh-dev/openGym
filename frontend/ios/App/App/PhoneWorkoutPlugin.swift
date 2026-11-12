@@ -67,9 +67,10 @@ public class PhoneWorkoutPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
         let type = call.getString("type")
+        let outdoor = call.getBool("outdoor") ?? false
         DispatchQueue.main.async {
             let s = PhoneWorkoutSession.shared
-            let ok = s.start(workoutId: wid, type: type)
+            let ok = s.start(workoutId: wid, type: type, outdoor: outdoor)
             var out: [String: Any] = ["ok": ok]
             if let w = s.workoutId { out["wid"] = w }
             if let start = s.startedAt { out["start"] = start.timeIntervalSince1970 * 1000 }
@@ -162,6 +163,8 @@ final class PhoneWorkoutSession: NSObject, HKWorkoutSessionDelegate, HKLiveWorko
     private var session: HKWorkoutSession?
     private var builder: HKLiveWorkoutBuilder?
     private var query: HKAnchoredObjectQuery?
+    /// Where this session happened, and the weather there. A walk, run or ride keeps the path.
+    private var location: WorkoutLocation?
     private let bpm = HKUnit.count().unitDivided(by: .minute())
     /// Every reading of the session by its own time, oldest first (main queue only).
     private var readings: [(Date, Double)] = []
@@ -181,13 +184,13 @@ final class PhoneWorkoutSession: NSObject, HKWorkoutSessionDelegate, HKLiveWorko
 
     /// A session for this workout, started now; true when one runs for it afterwards. A session
     /// already running for it is kept; one left over from another workout is dropped unsaved.
-    func start(workoutId wid: String, type: String?) -> Bool {
+    func start(workoutId wid: String, type: String?, outdoor: Bool = false) -> Bool {
         if session != nil, workoutId == wid { return true }
         if session != nil { end(workoutId: nil, save: false, at: nil, title: nil, discarded: false) }
         guard HKHealthStore.isHealthDataAvailable() else { return false }
         let config = HKWorkoutConfiguration()
         config.activityType = type.flatMap { AppleHealthPlugin.activityTypes[$0] } ?? .traditionalStrengthTraining
-        config.locationType = .indoor
+        config.locationType = outdoor ? .outdoor : .indoor
         let s: HKWorkoutSession
         do { s = try HKWorkoutSession(healthStore: store, configuration: config) } catch { return false }
         let b = s.associatedWorkoutBuilder()
@@ -202,6 +205,7 @@ final class PhoneWorkoutSession: NSObject, HKWorkoutSessionDelegate, HKLiveWorko
         let now = Date()
         startedAt = now
         PhoneWorkoutLedger.mark(Self.syncId(wid), "live")
+        beginLocation(outdoor)
         s.startActivity(with: now)
         b.beginCollection(withStart: now) { _, _ in
             // One workout in Apple Health: the post-hoc write finds this sync id and skips it.
@@ -209,6 +213,15 @@ final class PhoneWorkoutSession: NSObject, HKWorkoutSessionDelegate, HKLiveWorko
         }
         startQuery(from: now)
         return true
+    }
+
+    /// Every live session records where it happened and the weather. `path` keeps the route of a
+    /// walk, run or ride; anything else keeps one location. A second start drops the previous one.
+    private func beginLocation(_ path: Bool) {
+        location?.discard()
+        let rec = WorkoutLocation(store: store, path: path)
+        location = rec
+        rec.start()
     }
 
     /// The app was killed (or crashed) with a session running: iOS kept it and hands it back, with
@@ -243,6 +256,7 @@ final class PhoneWorkoutSession: NSObject, HKWorkoutSessionDelegate, HKLiveWorko
         b.delegate = self
         session = s
         builder = b
+        beginLocation(s.workoutConfiguration.locationType == .outdoor)
         let sid = (b.metadata as [String: Any]?)?[HKMetadataKeySyncIdentifier] as? String
         workoutId = sid.flatMap { $0.hasPrefix("opengym-w-") ? String($0.dropFirst("opengym-w-".count)) : nil }
         startedAt = s.startDate ?? b.startDate ?? Date()
@@ -278,18 +292,21 @@ final class PhoneWorkoutSession: NSObject, HKWorkoutSessionDelegate, HKLiveWorko
     /// `discarded`: the workout itself was discarded in the app. Then a copy of it that reached
     /// Apple Health anyway is taken out again, a moment later.
     func end(workoutId wid: String?, save: Bool, at: Date?, title: String?, discarded: Bool = false) {
-        guard let s = session, let b = builder else { return }
+        guard let s = session, let b = builder else { location?.discard(); location = nil; return }
         if let wid = wid, wid != workoutId { return }
         let sid = workoutId.map(Self.syncId)
         if let q = query { store.stop(q); query = nil }
         let endAt = max(at ?? Date(), b.startDate ?? startedAt ?? Date())
+        let place = location
         session = nil
         builder = nil
+        location = nil
         workoutId = nil
         startedAt = nil
         readings = []
         toldBpm = nil
         if !save {
+            place?.discard()
             // Discarded while the builder still collects, the session ended after: ended first,
             // HealthKit can take the discard for a finish and save the workout (TestFlight 1.4.4).
             b.discardWorkout()
@@ -303,16 +320,27 @@ final class PhoneWorkoutSession: NSObject, HKWorkoutSessionDelegate, HKLiveWorko
         // As Apple's iPhone sample: the activity stops, and once the session says it has stopped
         // the builder ends and saves, then the session ends. Not waited for longer than a few
         // seconds: a session that never reports it is saved all the same.
-        var meta: [String: Any] = [:]
-        if let title = title, !title.isEmpty { meta["OpenGymTitle"] = title }
         let finish = {
             b.endCollection(withEnd: endAt) { _, _ in
-                b.addMetadata(meta) { _, _ in
-                    b.finishWorkout { workout, _ in
-                        if let sid = sid { PhoneWorkoutLedger.mark(sid, workout != nil ? "saved" : nil) }
-                        s.end()
+                let saveWorkout: ([String: Any]) -> Void = { weather in
+                    var meta = weather
+                    if let title = title, !title.isEmpty { meta["OpenGymTitle"] = title }
+                    b.addMetadata(meta) { _, _ in
+                        b.finishWorkout { workout, _ in
+                            let ended = {
+                                if let sid = sid { PhoneWorkoutLedger.mark(sid, workout != nil ? "saved" : nil) }
+                                s.end()
+                            }
+                            if let workout, let place {
+                                place.finish(with: workout, done: ended)
+                            } else {
+                                place?.discard()
+                                ended()
+                            }
+                        }
                     }
                 }
+                if let place { place.weatherMetadata(saveWorkout) } else { saveWorkout([:]) }
             }
         }
         stopping.append((s, finish))
@@ -330,7 +358,9 @@ final class PhoneWorkoutSession: NSObject, HKWorkoutSessionDelegate, HKLiveWorko
                 let me = Bundle.main.bundleIdentifier ?? ""
                 let mine = (found ?? []).filter { $0.sourceRevision.source.bundleIdentifier == me }
                 guard !mine.isEmpty else { return }
-                self.store.delete(mine) { _, _ in }
+                WorkoutRoutes.remove(store: self.store, from: mine.compactMap { $0 as? HKWorkout }) {
+                    self.store.delete(mine) { _, _ in }
+                }
             }
             self.store.execute(q)
         }
@@ -393,6 +423,8 @@ final class PhoneWorkoutSession: NSObject, HKWorkoutSessionDelegate, HKLiveWorko
             guard self.session === workoutSession else { return }
             if let q = self.query { self.store.stop(q); self.query = nil }
             if let wid = self.workoutId { PhoneWorkoutLedger.mark(Self.syncId(wid), nil) }
+            self.location?.discard()
+            self.location = nil
             self.builder?.discardWorkout()
             self.session = nil
             self.builder = nil
